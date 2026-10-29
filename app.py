@@ -71,23 +71,34 @@ with tab_c:
         log("CT3 bead capture", s, f"{aq['capture_s']:.0f} s buffer / {et['capture_s']:.0f} s ethanol", "≤ 30 s", et["capture_s"] <= 30)
         with st.spinner("Wax valve heat model…"):
             t_open, hist = cm.wax_open(heater, 25.0, wall, Tm=melt)
-        log("CT4 valve opening", s, f"opens at {t_open:.0f} s", "≤ 120 s", t_open <= 120)
+        valve_ok = np.isfinite(t_open)
+        if valve_ok:
+            log("CT4 valve opening", s, f"opens at {t_open:.0f} s", "≤ 120 s", t_open <= 120)
+        else:
+            log("CT4 valve opening", s, "wax never fully melts within 600 s (heater too cool or wall too thick)", "≤ 120 s", False)
+            st.warning("The valve never opens with these settings, so the total time cannot be calculated. Raise the heater temperature, lower the wax melting point or use a thinner wall.")
         margin = melt - max(40, lysis_T); log("CT4 temperature margin", s, f"{margin:.0f} °C", "≥ 5 °C", margin >= 5)
-        w = cm.workflow(floor, bead, gap, compressed=compressed, valve_s=t_open)
-        log("CT5 sample-to-answer", s, f"{w['total_min']:.1f} min", "≤ 45 min", w["total_min"] <= 45)
-        rng = np.random.default_rng(int(seed)); orig = cm.bead_capture; tot = []
-        for _ in range(runs):
-            Ms = rng.uniform(1.5e4, 4.5e4); vf = rng.uniform(0.8, 1.3); g = rng.uniform(max(0.1, gap - 0.2), gap + 0.5); bb = rng.uniform(Br - 0.15, Br + 0.03)
-            cm.bead_capture = lambda f, gg, be, mu, Ms=Ms, vf=vf, g=g, bb=bb: orig(f, g, be, mu * vf, Ms=Ms, Br=bb)
-            tot.append(cm.workflow(floor, bead, gap, compressed=compressed, valve_s=t_open)["total_min"])
-        cm.bead_capture = orig; tot = np.array(tot); pas = (tot <= 45).mean() * 100
-        log("CT6 Monte Carlo", dict(s, runs=runs, seed=int(seed)), f"{pas:.1f}% of runs ≤ 45 min (median {np.median(tot):.1f})", "≥ 95%", pas >= 95)
-        fig, ax = plt.subplots(1, 3, figsize=(14, 3.4))
-        ax[0].barh([n for n, _ in w["steps"]], [v for _, v in w["steps"]], color="#2a78d6"); ax[0].invert_yaxis(); ax[0].set_xlabel("min"); ax[0].set_title(f"Total {w['total_min']:.1f} min", loc="left")
-        h = np.array(hist); ax[1].plot(h[:, 0], h[:, 1], color="#eb6834"); ax[1].axhline(melt, ls="--", color="k"); ax[1].axhline(lysis_T, ls=":", color="#6250d6"); ax[1].axvline(t_open, color="#2a78d6")
-        ax[1].set_xlabel("s"); ax[1].set_ylabel("°C"); ax[1].set_title(f"Wax opens at {t_open:.0f} s", loc="left")
-        ax[2].hist(tot, bins=30, color="#1baf7a"); ax[2].axvline(45, ls="--", color="k"); ax[2].set_xlabel("total min"); ax[2].set_title(f"{pas:.0f}% within 45 min", loc="left")
-        fig.tight_layout(); st.pyplot(fig)
+        if valve_ok:
+            w = cm.workflow(floor, bead, gap, compressed=compressed, valve_s=t_open)
+            log("CT5 sample-to-answer", s, f"{w['total_min']:.1f} min", "≤ 45 min", w["total_min"] <= 45)
+            rng = np.random.default_rng(int(seed)); orig = cm.bead_capture; tot = []
+            for _ in range(runs):
+                Ms = rng.uniform(1.5e4, 4.5e4); vf = rng.uniform(0.8, 1.3); g = rng.uniform(max(0.1, gap - 0.2), gap + 0.5); bb = rng.uniform(Br - 0.15, Br + 0.03)
+                cm.bead_capture = lambda f, gg, be, mu, Ms=Ms, vf=vf, g=g, bb=bb: orig(f, g, be, mu * vf, Ms=Ms, Br=bb)
+                tot.append(cm.workflow(floor, bead, gap, compressed=compressed, valve_s=t_open)["total_min"])
+            cm.bead_capture = orig; tot = np.array(tot); tot = tot[np.isfinite(tot)]; pas = (tot <= 45).mean() * 100 if len(tot) else 0.0
+            log("CT6 Monte Carlo", dict(s, runs=runs, seed=int(seed)), f"{pas:.1f}% of runs ≤ 45 min (median {np.median(tot):.1f})", "≥ 95%", pas >= 95)
+            fig, ax = plt.subplots(1, 3, figsize=(14, 3.4))
+            ax[0].barh([n for n, _ in w["steps"]], [v for _, v in w["steps"]], color="#2a78d6"); ax[0].invert_yaxis(); ax[0].set_xlabel("min"); ax[0].set_title(f"Total {w['total_min']:.1f} min", loc="left")
+            h = np.array(hist); ax[1].plot(h[:, 0], h[:, 1], color="#eb6834"); ax[1].axhline(melt, ls="--", color="k"); ax[1].axhline(lysis_T, ls=":", color="#6250d6"); ax[1].axvline(t_open, color="#2a78d6")
+            ax[1].set_xlabel("s"); ax[1].set_ylabel("°C"); ax[1].set_title(f"Wax opens at {t_open:.0f} s", loc="left")
+            ax[2].hist(tot, bins=30, color="#1baf7a"); ax[2].axvline(45, ls="--", color="k"); ax[2].set_xlabel("total min"); ax[2].set_title(f"{pas:.0f}% within 45 min", loc="left")
+            fig.tight_layout(); st.pyplot(fig)
+        else:
+            h = np.array(hist)
+            if len(h):
+                fig, ax = plt.subplots(figsize=(7, 3)); ax.plot(h[:, 0], h[:, 1], color="#eb6834"); ax.axhline(melt, ls="--", color="k")
+                ax.set_xlabel("s"); ax.set_ylabel("°C"); ax.set_title("Wax temperature: never reaches full melt", loc="left"); st.pyplot(fig)
 
 # ---------------- optical ----------------
 with tab_o:
